@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-10-05
+
+### Fixed
+
+- A slash command in a reply (`/reload-plugins`, `/deck`) is no longer read as a file path: it is not linked, not listed in the link band, and a click does not try to open it.
+
 ## [0.3.0] - 2026-10-05
 
 Forked from prismantis 0.6.0 as glint, synced with 0.6.1.

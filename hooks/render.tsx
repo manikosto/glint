@@ -2,7 +2,7 @@ import type { ElementConstructor, ElementTable, MarkdownProps, RenderElement } f
 
 import type { Block, Inline } from './markdown'
 import { inlineText } from './markdown'
-import { LINKS, fileHref, isPathLike, stateOf } from './links'
+import { LINKS, fileHref, isCommandLike, isPathLike, stateOf } from './links'
 import { commentTail, commentVisual, flow, hasRtl } from './rtl'
 import type { Style, Theme } from './theme'
 import type { PrismToken } from './vendor/prism.js'
@@ -35,7 +35,7 @@ const urlLink = (el: ElementTable, style: Style, text: string, _href: string, ke
 }
 
 const isLinky = (nodes: Inline[]): boolean =>
-  nodes.some(n => n.kind === 'link' || n.kind === 'path' || (n.kind === 'code' && isPathLike(n.text)) || ('children' in n && isLinky(n.children)))
+  nodes.some(n => n.kind === 'link' || (n.kind === 'path' && !isCommandLike(n.text)) || (n.kind === 'code' && isPathLike(n.text)) || ('children' in n && isLinky(n.children)))
 
 const mdEscape = (s: string) => s.replace(/([\\`*_[\]<>])/g, '\\$1')
 
@@ -53,6 +53,7 @@ const toMarkdown = (nodes: Inline[], paths: boolean): string =>
         return paths && isPathLike(n.text) ? `[${mark}\`${n.text}\`](${fileHref(n.text)})` : `\`${n.text}\``
       }
       case 'path': {
+        if (isCommandLike(n.text)) return mdEscape(n.text)
         const mark = stateOf(n.text) === 'new' ? '+' : stateOf(n.text) === 'edit' ? '✎' : ''
         return `[${mark}${mdEscape(n.text)}](${fileHref(n.text)})`
       }
@@ -98,7 +99,7 @@ const renderInline = (el: ElementTable, style: Style, nodes: Inline[], keyBase: 
       case 'number':
         return <Text key={key} color={t.number}>{n.text}</Text>
       case 'path':
-        return fileLink(el, style, n.text, key, false)
+        return isCommandLike(n.text) ? <Text key={key} color={t.inlineCode}>{n.text}</Text> : fileLink(el, style, n.text, key, false)
       case 'dim':
         return <Text key={key} dimColor>{n.text}</Text>
     }

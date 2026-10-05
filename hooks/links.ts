@@ -22,7 +22,10 @@ export const RELPATH = new RegExp(`(?<![\\w/.:@~-])((?:\\.{1,2}/)?(?:[\\w@+-][\\
 const ABS = /^(?:~|\.{1,2})?\/[\w.@+-]/
 const REL = new RegExp(`^(?:\\.{1,2}/)?(?:[\\w@+-][\\w.@+-]*/)*[\\w@+-][\\w.@+-]*\\.(?:${EXT})(?::\\d+)?$`)
 
-export const isPathLike = (s: string): boolean => !/\s/.test(s) && !/^https?:/.test(s) && (ABS.test(s) || REL.test(s))
+// /reload-plugins or /deck reads like a path to the root but is a slash command: one segment, no extension.
+export const isCommandLike = (s: string): boolean => /^\/[a-z][\w:-]*$/i.test(s)
+
+export const isPathLike = (s: string): boolean => !/\s/.test(s) && !/^https?:/.test(s) && !isCommandLike(s) && (ABS.test(s) || REL.test(s))
 
 export function resolvePath(p: string): string {
   const clean = p.replace(/:\d+(?::\d+)?$/, '')
@@ -80,7 +83,7 @@ export function gather(text: string, limit = 6): Target[] {
   for (const m of body.matchAll(URL_RE)) add('url', m[0].replace(/^https?:\/\//, ''), m[0])
   for (const m of body.matchAll(CODE)) if (isPathLike(m[1]!)) add('file', m[1]!.split('/').pop() ?? m[1]!, m[1]!)
   const plain = body.replace(CODE, ' ').replace(MD_LINK, ' ').replace(URL_RE, ' ')
-  for (const m of plain.matchAll(ABS_IN_TEXT)) if (m[1]!.length > 2) add('file', m[1]!.split('/').pop() ?? m[1]!, m[1]!)
+  for (const m of plain.matchAll(ABS_IN_TEXT)) if (m[1]!.length > 2 && !isCommandLike(m[1]!)) add('file', m[1]!.split('/').pop() ?? m[1]!, m[1]!)
   for (const m of plain.matchAll(RELPATH)) add('file', m[1]!.split('/').pop() ?? m[1]!, m[1]!)
   const rank = (t: Target) => (t.state === 'new' ? 0 : t.state === 'edit' ? 1 : t.kind === 'url' ? 2 : 3)
   return out.map((t, i) => [t, i] as const).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([t]) => t).slice(0, limit)
