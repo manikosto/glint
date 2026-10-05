@@ -1,0 +1,14 @@
+{
+  "name": "glint",
+  "owner": { "name": "manikosto", "url": "https://github.com/manikosto" },
+  "description": "glint: colorful Claude Code replies with clickable links and files, folding blocks and review-style diffs.",
+  "plugins": [
+    {
+      "name": "glint",
+      "description": "Colorful replies with clickable links and file paths, folding blocks and review-style diffs (fork of prismantis, MIT).",
+      "source": "./",
+      "category": "appearance",
+      "tags": ["mod", "theme", "markdown", "diff", "links"]
+    }
+  ]
+}

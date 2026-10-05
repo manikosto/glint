@@ -1,0 +1,698 @@
+import type { ElementConstructor, ElementTable, MarkdownProps, RenderElement } from 'claude-code'
+
+import type { Block, Inline } from './markdown'
+import { inlineText } from './markdown'
+import { LINKS, fileHref, isPathLike, stateOf } from './links'
+import { commentTail, commentVisual, flow, hasRtl } from './rtl'
+import type { Style, Theme } from './theme'
+import type { PrismToken } from './vendor/prism.js'
+import { languages, tokenize } from './vendor/prism.js'
+
+const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]|\p{Extended_Pictographic}/u
+const segmenter = typeof Intl !== 'undefined' && 'Segmenter' in Intl ? new Intl.Segmenter() : undefined
+
+export const width = (s: string): number => {
+  const graphemes = segmenter ? [...segmenter.segment(s)].map(g => g.segment) : [...s]
+  return graphemes.reduce((w, g) => (/^\p{M}+$/u.test(g) ? w : w + (WIDE.test(g) ? 2 : 1)), 0)
+}
+
+const flowOf = (style: Style, nodes: Inline[], columns: number) => (style.reorder ? flow(nodes, columns, width, style.shape) : null)
+
+// Colors for files Claude created or edited this session, kept the same across themes so they read as status.
+const NEW_FILE = '#a6e3a1'
+const EDITED_FILE = '#f9e2af'
+
+const fileLink = (el: ElementTable, style: Style, text: string, key: string, asCode: boolean): RenderElement => {
+  const { Text } = el
+  const state = stateOf(text)
+  const color = state === 'new' ? NEW_FILE : state === 'edit' ? EDITED_FILE : asCode ? style.theme.inlineCode : style.theme.path
+  return <Text key={key} color={color} bold={state !== undefined} underline>{text}</Text>
+}
+
+const urlLink = (el: ElementTable, style: Style, text: string, _href: string, key: string): RenderElement => {
+  const { Text } = el
+  return <Text key={key} color={style.theme.link} underline>{text}</Text>
+}
+
+const isLinky = (nodes: Inline[]): boolean =>
+  nodes.some(n => n.kind === 'link' || n.kind === 'path' || (n.kind === 'code' && isPathLike(n.text)) || ('children' in n && isLinky(n.children)))
+
+const mdEscape = (s: string) => s.replace(/([\\`*_[\]<>])/g, '\\$1')
+
+// The same line spelled as markdown, every URL and file a link, for the engine's Markdown element:
+// the one place a click on a link reaches the plugin instead of the terminal.
+const toMarkdown = (nodes: Inline[], paths: boolean): string =>
+  nodes.map(n => {
+    switch (n.kind) {
+      case 'text': case 'number': case 'dim': return mdEscape(n.text)
+      case 'strong': return `**${toMarkdown(n.children, paths)}**`
+      case 'emphasis': return `*${toMarkdown(n.children, paths)}*`
+      case 'strike': return `~~${toMarkdown(n.children, paths)}~~`
+      case 'code': {
+        const mark = stateOf(n.text) === 'new' ? '+' : stateOf(n.text) === 'edit' ? '✎' : ''
+        return paths && isPathLike(n.text) ? `[${mark}\`${n.text}\`](${fileHref(n.text)})` : `\`${n.text}\``
+      }
+      case 'path': {
+        const mark = stateOf(n.text) === 'new' ? '+' : stateOf(n.text) === 'edit' ? '✎' : ''
+        return `[${mark}${mdEscape(n.text)}](${fileHref(n.text)})`
+      }
+      case 'link': {
+        const href = !/^(https?|file|mailto):/.test(n.href) && isPathLike(n.href) ? fileHref(n.href) : n.href
+        return `[${mdEscape(n.text)}](${href})`
+      }
+    }
+  }).join('')
+
+// One line of prose: a Markdown element when it carries a link or a file and a click has somewhere to go.
+const inlineLine = (el: ElementTable, style: Style, nodes: Inline[], key: string, props: { italic?: boolean; color?: string } = {}): RenderElement => {
+  const { Text } = el
+  const Markdown = (el as { Markdown?: ElementConstructor<MarkdownProps> }).Markdown
+  const press = LINKS.press
+  if (Markdown && press && isLinky(nodes)) {
+    return <Markdown key={key} text={toMarkdown(nodes, style.highlightPaths)} onLinkPress={link => press(link.href)} />
+  }
+  return <Text key={key} {...props}>{renderInline(el, style, nodes, key)}</Text>
+}
+
+const renderInline = (el: ElementTable, style: Style, nodes: Inline[], keyBase: string): RenderElement[] => {
+  const { Text } = el
+  const t = style.theme
+  return nodes.map((n, i) => {
+    const key = `${keyBase}.${i}`
+    switch (n.kind) {
+      case 'text':
+        return <Text key={key}>{n.text}</Text>
+      case 'strong':
+        return <Text key={key} bold color={t.strong}>{renderInline(el, style, n.children, key)}</Text>
+      case 'emphasis':
+        return <Text key={key} italic color={t.emphasis}>{renderInline(el, style, n.children, key)}</Text>
+      case 'strike':
+        return <Text key={key} strikethrough dimColor>{renderInline(el, style, n.children, key)}</Text>
+      case 'code':
+        return style.highlightPaths && isPathLike(n.text) ? fileLink(el, style, n.text, key, true) : <Text key={key} color={t.inlineCode}>{n.text}</Text>
+      case 'link':
+        if (!/^(https?|file|mailto):/.test(n.href) && isPathLike(n.href)) return fileLink(el, style, n.text, key, false)
+        return n.text === n.href
+          ? urlLink(el, style, n.href, n.href, key)
+          : <Text key={key}>{urlLink(el, style, n.text, n.href, key + 'l')}<Text dimColor> ({n.href.replace(/^https?:\/\//, '')})</Text></Text>
+      case 'number':
+        return <Text key={key} color={t.number}>{n.text}</Text>
+      case 'path':
+        return fileLink(el, style, n.text, key, false)
+      case 'dim':
+        return <Text key={key} dimColor>{n.text}</Text>
+    }
+  })
+}
+
+const renderFlow = (el: ElementTable, style: Style, lines: Inline[][], key: string, props: { italic?: boolean; color?: string } = {}) => {
+  const { Text } = el
+  return lines.map((line, i) => <Text key={`${key}.${i}`} {...props}>{renderInline(el, style, line, `${key}.${i}`)}</Text>)
+}
+
+const PRISM_COLORS: Record<string, keyof Theme> = {
+  comment: 'codeComment', prolog: 'codeComment', doctype: 'codeComment', cdata: 'codeComment',
+  string: 'codeString', char: 'codeString', 'template-string': 'codeString', 'attr-value': 'codeString', url: 'codeString',
+  number: 'number', boolean: 'number', constant: 'number', symbol: 'number', inserted: 'number',
+  keyword: 'codeFlag', important: 'codeFlag', atrule: 'codeFlag', rule: 'codeFlag', deleted: 'codeFlag',
+  function: 'codeCommand', 'class-name': 'codeCommand', builtin: 'codeCommand', key: 'codeCommand', selector: 'codeCommand',
+  property: 'link', tag: 'link', 'attr-name': 'emphasis', variable: 'emphasis', regex: 'path',
+}
+
+type Segment = { text: string; color?: string; italic: boolean }
+
+const flatten = (tokens: PrismToken[], style: Style, color?: string, italic = false): Segment[] =>
+  tokens.flatMap(token => {
+    if (typeof token === 'string') return [{ text: token, color, italic }]
+    const names = [token.type, ...(Array.isArray(token.alias) ? token.alias : token.alias ? [token.alias] : [])]
+    const slot = names.map(n => PRISM_COLORS[n]).find(Boolean)
+    const inner = Array.isArray(token.content) ? token.content : [token.type === 'comment' && typeof token.content === 'string' && style.reorder ? commentVisual(token.content, style.shape) : token.content]
+    return flatten(inner, style, slot ? style.theme[slot] : color, italic || token.type === 'comment')
+  })
+
+export const remember = <T,>(cache: Map<string, T>, key: string, make: () => T, limit = 200): T => {
+  const hit = cache.get(key)
+  if (hit !== undefined) return hit
+  const value = make()
+  cache.set(key, value)
+  if (cache.size > limit) cache.delete(cache.keys().next().value!)
+  return value
+}
+
+const highlighted = new WeakMap<Style, Map<string, Segment[][]>>()
+
+const grammarFor = (lang: string) => {
+  const name = lang.toLowerCase()
+  const grammar = Object.hasOwn(languages, name) ? languages[name] : undefined
+  return grammar !== null && typeof grammar === 'object' ? grammar : undefined
+}
+
+export const highlightBlock = ({ Text }: ElementTable, style: Style, lines: string[], lang: string, key: string): RenderElement[] | null => {
+  const grammar = grammarFor(lang)
+  if (!grammar) return null
+  const code = lines.join('\n')
+  const cache = highlighted.get(style) ?? new Map<string, Segment[][]>()
+  highlighted.set(style, cache)
+  const rows = remember(cache, `${lang}\0${code}`, () => {
+    const out: Segment[][] = [[]]
+    for (const seg of flatten(tokenize(code, grammar), style)) {
+      seg.text.split('\n').forEach((piece, i) => {
+        if (i > 0) out.push([])
+        if (piece) out[out.length - 1]!.push({ ...seg, text: piece })
+      })
+    }
+    return out
+  })
+  return rows.map((row, r) => (
+    <Text key={`${key}.${r}`} color={style.theme.codeText}>
+      {row.length ? row.map((s, i) => <Text key={`${key}.${r}.${i}`} color={s.color} italic={s.italic}>{s.text}</Text>) : ' '}
+    </Text>
+  ))
+}
+
+const isShellLang = (lang: string) => lang === '' || /^(sh|bash|zsh|shell|console|fish|powershell|ps1)$/i.test(lang)
+
+export const codeLine = (el: ElementTable, style: Style, line: string, lang: string, key: string): RenderElement => {
+  const { Text } = el
+  const t = style.theme
+  const isShell = isShellLang(lang)
+  if (/[\u2500-\u257F]/.test(line)) return <Text key={key} color={t.codeText}>{line}</Text>
+  const comment = style.reorder ? commentTail(line, style.shape) : null
+  if (comment) {
+    return (
+      <Text key={key} color={t.codeText}>
+        {comment.head ? codeLine(el, style, comment.head, lang, `${key}.h`) : null}
+        <Text color={t.codeComment}>{comment.marker + comment.tail}</Text>
+      </Text>
+    )
+  }
+  if (!isShell) return <Text key={key} color={t.codeText}>{line || ' '}</Text>
+  if (/^\s*#/.test(line)) return <Text key={key} color={t.codeComment}>{line}</Text>
+  const parts = line.split(/("[^"]*"|'[^']*'|\s+)/).filter(p => p !== '')
+  let seenCommand = false
+  return (
+    <Text key={key} color={t.codeText}>
+      {parts.map((p, i) => {
+        if (/^\s+$/.test(p)) return <Text key={`${key}.${i}`}>{p}</Text>
+        if (/^["']/.test(p)) return <Text key={`${key}.${i}`} color={t.codeString}>{p}</Text>
+        if (/^--?[\w-]/.test(p)) return <Text key={`${key}.${i}`} color={t.codeFlag}>{p}</Text>
+        if (!seenCommand && !/^[$>|&;]+$/.test(p)) {
+          seenCommand = true
+          return <Text key={`${key}.${i}`} color={t.codeCommand}>{p}</Text>
+        }
+        if (/^(\||&&|;|\|\|)$/.test(p)) seenCommand = false
+        return <Text key={`${key}.${i}`}>{p}</Text>
+      })}
+    </Text>
+  )
+}
+
+const columnWidths = (natural: number[], available: number, gap: number): number[] => {
+  const room = Math.max(natural.length, available - gap * (natural.length - 1))
+  const total = natural.reduce((a, b) => a + b, 0)
+  if (total <= room) return natural
+  const widths = natural.map(w => Math.max(1, Math.floor((w * room) / total)))
+  while (widths.reduce((a, b) => a + b, 0) > room) {
+    const widest = widths.indexOf(Math.max(...widths))
+    if (widths[widest]! <= 1) break
+    widths[widest]!--
+  }
+  return widths
+}
+
+const displayText = (inline: Inline[]): string =>
+  inline.map(n => (n.kind === 'link' && n.text !== n.href ? `${n.text} (${n.href})` : 'children' in n ? displayText(n.children) : n.text)).join('')
+
+const isRtlTable = (style: Style, block: Extract<Block, { kind: 'table' }>): boolean => {
+  const cells = [...block.header, ...block.rows.flat()].filter(cell => displayText(cell).trim() !== '')
+  return cells.filter(cell => flowOf(style, cell, Infinity)?.base === 'R').length * 2 > cells.length
+}
+
+const renderTable = (el: ElementTable, style: Style, block: Extract<Block, { kind: 'table' }>, columns: number, key: string) => {
+  const { Box, Text } = el
+  const t = style.theme
+  const rtl = isRtlTable(style, block)
+  const gap = style.tableStyle === 'grid' ? 3 : 2
+  const natural = block.header.map((h, c) =>
+    Math.max(width(displayText(h)), ...block.rows.map(r => width(displayText(r[c] ?? [])))),
+  )
+  const widths = columnWidths(natural, columns, gap)
+  const order = natural.map((_, c) => c)
+  if (rtl) order.reverse()
+  const ruleChar = style.tableStyle === 'grid' ? '━' : '─'
+  const justify = (c: number) =>
+    block.align[c] === 'right' ? 'flex-end' : block.align[c] === 'center' ? 'center' : 'flex-start'
+
+  const rule = (k: string, heavy: boolean) => (
+    <Box key={k} flexDirection="row" columnGap={gap}>
+      {order.map(c => (
+        <Text key={`${k}.${c}`} color={t.tableRule} dimColor={!heavy && !t.tableRule}>
+          {(heavy ? ruleChar : '─').repeat(widths[c]!)}
+        </Text>
+      ))}
+    </Box>
+  )
+
+  const row = (cells: Inline[][], k: string, isHeader: boolean) => (
+    <Box key={k} flexDirection="row" columnGap={gap}>
+      {order.map(c => {
+        const w = widths[c]!
+        const cell = flowOf(style, cells[c] ?? [], Infinity)
+        const content = cell ? cell.lines[0]! : (cells[c] ?? [])
+        const side = cell?.base === 'R' && block.align[c] !== 'center' ? 'flex-end' : justify(c)
+        return (
+          <Box key={`${k}.${c}`} width={w} flexShrink={0} justifyContent={side}>
+            {isHeader
+              ? <Text bold color={t.tableHeader}>{inlineText(content)}</Text>
+              : <Text>{renderInline(el, style, content, `${k}.${c}`)}</Text>}
+          </Box>
+        )
+      })}
+    </Box>
+  )
+
+  const body: RenderElement[] = [row(block.header, `${key}.h`, true), rule(`${key}.hr`, true)]
+  block.rows.forEach((r, i) => {
+    body.push(row(r, `${key}.r${i}`, false))
+    if (style.tableStyle !== 'minimal' && i < block.rows.length - 1) body.push(rule(`${key}.r${i}r`, false))
+  })
+  return <Box key={key} flexDirection="column" {...(rtl ? { alignSelf: 'flex-end' as const } : {})}>{body}</Box>
+}
+
+const renderHeading = (el: ElementTable, style: Style, block: Extract<Block, { kind: 'heading' }>, key: string) => {
+  const rtl = flowOf(style, block.inline, Infinity)
+  if (!rtl) return drawHeading(el, style, block, block.inline, key)
+  const heading = drawHeading(el, style, block, rtl.lines[0]!, key)
+  return rtl.base === 'R' ? <el.Box key={key} alignSelf="flex-end">{heading}</el.Box> : heading
+}
+
+const drawHeading = (el: ElementTable, style: Style, block: Extract<Block, { kind: 'heading' }>, inline: Inline[], key: string) => {
+  const { Box, Text } = el
+  const t = style.theme
+  const color = block.level <= 2 ? t.heading : t.accent ?? t.heading
+  const label = inlineText(inline)
+  switch (style.headingStyle) {
+    case 'uppercase':
+      return <Text key={key} bold color={color}>{block.level === 1 ? label.toUpperCase() : label}</Text>
+    case 'underline':
+      return <Text key={key} bold underline={block.level <= 2} color={color}>{label}</Text>
+    case 'banner':
+      if (block.level === 1) return <Box key={key} alignSelf="flex-start" borderStyle="bold" borderColor={color} paddingX={1}><Text bold color={color}>{renderInline(el, style, inline, key)}</Text></Box>
+      return block.level === 2
+        ? <Box key={key} flexDirection="column" alignSelf="flex-start"><Text bold color={color}>{renderInline(el, style, inline, key)}</Text><Text color={color}>{'━'.repeat(width(label))}</Text></Box>
+        : <Text key={key} bold color={block.level === 3 ? color : t.strong}>{renderInline(el, style, inline, key)}</Text>
+    default:
+      return <Text key={key} bold color={color}>{renderInline(el, style, inline, key)}</Text>
+  }
+}
+
+const ALERT_COLOR = { note: 'blue', tip: 'green', important: 'magenta', warning: 'yellow', caution: 'red' } as const
+
+const renderParagraph = (el: ElementTable, style: Style, block: Extract<Block, { kind: 'paragraph' }>, columns: number, key: string) => {
+  const { Box, Text } = el
+  const rtl = flowOf(style, block.inline, columns)
+  if (rtl?.base === 'R') return <Box key={key} flexDirection="column" alignItems="flex-end">{renderFlow(el, style, rtl.lines, key)}</Box>
+  return inlineLine(el, style, rtl ? rtl.lines[0]! : block.inline, key)
+}
+
+const renderQuote = (el: ElementTable, style: Style, block: Extract<Block, { kind: 'quote' }>, columns: number, key: string) => {
+  const { Box, Text } = el
+  const t = style.theme
+  const rtl = flowOf(style, block.inline, columns - 2)
+  if (rtl?.base === 'R') {
+    return (
+      <Box key={key} flexDirection="row" justifyContent="flex-end">
+        <Box flexDirection="column" alignItems="flex-end">{renderFlow(el, style, rtl.lines, key, { italic: true, color: t.quote })}</Box>
+        <Text color={t.accent}> │</Text>
+      </Box>
+    )
+  }
+  return (
+    <Box key={key} flexDirection="row">
+      <Text color={t.accent}>│ </Text>
+      {inlineLine(el, style, rtl ? rtl.lines[0]! : block.inline, key, { italic: true, color: t.quote })}
+    </Box>
+  )
+}
+
+const renderAlert = (el: ElementTable, style: Style, block: Extract<Block, { kind: 'alert' }>, columns: number, key: string) => {
+  const { Box, Text } = el
+  const color = ALERT_COLOR[block.level]
+  const title = <Text bold color={color}>{block.level[0]!.toUpperCase() + block.level.slice(1)}</Text>
+  const rtl = flowOf(style, block.inline, columns - 4)
+  if (rtl?.base === 'R') {
+    return (
+      <Box key={key} flexDirection="column" alignSelf="flex-end" alignItems="flex-end" borderStyle="round" borderColor={color} paddingX={1}>
+        {title}
+        {renderFlow(el, style, rtl.lines, key)}
+      </Box>
+    )
+  }
+  const inline = rtl ? rtl.lines[0]! : block.inline
+  return (
+    <Box key={key} flexDirection="column" alignSelf="flex-start" borderStyle="round" borderColor={color} paddingX={1}>
+      {title}
+      {inline.length ? inlineLine(el, style, inline, key) : null}
+    </Box>
+  )
+}
+
+const renderList = (el: ElementTable, style: Style, block: Extract<Block, { kind: 'list' }>, columns: number, key: string) => {
+  const { Box, Text } = el
+  const t = style.theme
+  return (
+    <Box key={key} flexDirection="column">
+      {block.items.map((item, i) => {
+        const k = `${key}.${i}`
+        const glyph = /\d/.test(item.marker) ? item.marker : item.depth ? '◦' : '•'
+        const rtl = flowOf(style, item.inline, columns - item.depth * 2 - 2)
+        if (rtl?.base === 'R') {
+          return (
+            <Box key={k} flexDirection="row" justifyContent="flex-end" paddingRight={item.depth * 2}>
+              <Box flexDirection="column" alignItems="flex-end">{renderFlow(el, style, rtl.lines, k)}</Box>
+              <Text color={t.bullet}>{` ${glyph}`}</Text>
+            </Box>
+          )
+        }
+        return (
+          <Box key={k} flexDirection="row" paddingLeft={item.depth * 2}>
+            <Text color={t.bullet}>{`${glyph} `}</Text>
+            {inlineLine(el, style, rtl ? rtl.lines[0]! : item.inline, k)}
+          </Box>
+        )
+      })}
+    </Box>
+  )
+}
+
+export type CopyButton = (text: string, key: string, label?: string) => RenderElement | null
+export type Drawn = Map<number, { element: RenderElement; art: string }>
+
+const copySource = (block: Block): string | undefined =>
+  block.kind === 'code' ? block.lines.join('\n') : block.kind === 'table' || block.kind === 'list' ? block.raw : block.kind === 'quote' || block.kind === 'alert' ? block.raw.split('\n').map(line => line.replace(/^\s*>\s?/, '')).join('\n') : undefined
+
+// Long blocks fold to their first rows; a button below opens and closes them.
+export type Fold = { isOpen: (b: number) => boolean; toggle: (b: number) => void }
+const FOLD = { code: { over: 24, keep: 12 }, list: { over: 14, keep: 8 }, table: { over: 14, keep: 8 } } as const
+
+const foldButton = (el: ElementTable, fold: Fold, b: number, hidden: number, noun: string, isOpen: boolean): RenderElement => {
+  const { Button } = el
+  return (
+    <Button
+      key={`fold${b}`}
+      plain
+      dimColor
+      label={isOpen ? `▴ collapse` : `▾ ${hidden} more ${noun}${hidden === 1 ? '' : 's'}`}
+      onPress={() => fold.toggle(b)}
+    />
+  )
+}
+
+// ```diff drawn as a review: old and new line numbers, added lines on green, removed on red, hunks in blue.
+const DIFF_LANGS = new Set(['diff', 'patch', 'udiff'])
+export const isDiffLang = (lang: string) => DIFF_LANGS.has(lang.toLowerCase())
+
+export const diffNewText = (lines: string[]): string =>
+  lines
+    .filter(l => !l.startsWith('-') && !l.startsWith('@@') && !l.startsWith('diff ') && !l.startsWith('index ') && !l.startsWith('+++') && !l.startsWith('---') && !l.startsWith('\\'))
+    .map(l => (l.startsWith('+') || l.startsWith(' ') ? l.slice(1) : l))
+    .join('\n')
+
+const renderDiff = (el: ElementTable, lines: string[], key: string): RenderElement[] => {
+  const { Box, Text } = el
+  let oldNo = 0
+  let newNo = 0
+  const gut = (n: number | undefined) => (n === undefined ? '    ' : String(n).padStart(4))
+  return lines.map((line, i) => {
+    const k = `${key}.d${i}`
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/.exec(line)
+    if (hunk) {
+      oldNo = Number(hunk[1])
+      newNo = Number(hunk[2])
+      return <Text key={k} color="#8cc8e8" backgroundColor="#1f2a33">{`${'⋯'.padStart(4)} ${'⋯'.padStart(4)}  ${line}`}</Text>
+    }
+    if (/^(diff |index |\+\+\+ |--- )/.test(line)) return <Text key={k} dimColor bold>{`           ${line}`}</Text>
+    if (line.startsWith('+')) {
+      const n = newNo++
+      return <Box key={k} flexDirection="row"><Text color="#5b8a5b">{`${gut(undefined)} ${gut(n)} `}</Text><Text color="#a6e3a1" backgroundColor="#1f3a24">{`+${line.slice(1)}`}</Text></Box>
+    }
+    if (line.startsWith('-')) {
+      const n = oldNo++
+      return <Box key={k} flexDirection="row"><Text color="#8a5b5b">{`${gut(n)} ${gut(undefined)} `}</Text><Text color="#f38ba8" backgroundColor="#3d1f22">{`-${line.slice(1)}`}</Text></Box>
+    }
+    const o = oldNo++
+    const n = newNo++
+    return <Box key={k} flexDirection="row"><Text dimColor>{`${gut(o || undefined)} ${gut(n || undefined)} `}</Text><Text>{line}</Text></Box>
+  })
+}
+
+export const renderBlocks = (el: ElementTable, style: Style, blocks: Block[], columns: number, drawn: Drawn = new Map(), copy?: CopyButton, fold?: Fold): RenderElement[] => {
+  const { Box, Text } = el
+  const t = style.theme
+  const rendered = blocks.map((block, b) => {
+    const key = `b${b}`
+    const isOpen = fold?.isOpen(b) ?? true
+    if (fold && block.kind === 'list' && block.items.length > FOLD.list.over) {
+      const shown = isOpen ? block : { ...block, items: block.items.slice(0, FOLD.list.keep) }
+      return (
+        <Box key={key} flexDirection="column">
+          {renderList(el, style, shown, columns, `${key}l`)}
+          {foldButton(el, fold, b, block.items.length - FOLD.list.keep, 'item', isOpen)}
+        </Box>
+      )
+    }
+    if (fold && block.kind === 'table' && block.rows.length > FOLD.table.over) {
+      const shown = isOpen ? block : { ...block, rows: block.rows.slice(0, FOLD.table.keep) }
+      return (
+        <Box key={key} flexDirection="column" alignSelf="flex-start">
+          {renderTable(el, style, shown, columns, `${key}t`)}
+          {foldButton(el, fold, b, block.rows.length - FOLD.table.keep, 'row', isOpen)}
+        </Box>
+      )
+    }
+    switch (block.kind) {
+      case 'heading':
+        return renderHeading(el, style, block, key)
+      case 'paragraph':
+        return renderParagraph(el, style, block, columns, key)
+      case 'quote':
+        return renderQuote(el, style, block, columns, key)
+      case 'alert':
+        return renderAlert(el, style, block, columns, key)
+      case 'rule':
+        return <Text key={key} color={t.rule} dimColor={!t.rule}>{'─'.repeat(Math.max(8, Math.min(columns, 80)))}</Text>
+      case 'code':
+        return drawn.get(b)?.element ?? (
+          <Box key={key} flexDirection="column" alignSelf="flex-start">
+            <Box flexDirection="row" justifyContent="space-between" columnGap={4}>
+              <Text color={t.codeComment}>{`── ${block.lang || 'code'}${block.lines.length > FOLD.code.over ? ` · ${block.lines.length} lines` : ''}`}</Text>
+              <Box flexDirection="row" columnGap={1}>
+                {isDiffLang(block.lang) ? copy?.(diffNewText(block.lines), `copynew${b}`, '⧉ new only') ?? null : null}
+                {copy?.(block.lines.join('\n'), `copy${b}`) ?? null}
+              </Box>
+            </Box>
+            <Box flexDirection="column" paddingLeft={isDiffLang(block.lang) ? 0 : 2}>
+              {(() => {
+                const folded = fold !== undefined && !isOpen && block.lines.length > FOLD.code.over
+                const lines = folded ? block.lines.slice(0, FOLD.code.keep) : block.lines
+                if (isDiffLang(block.lang)) return renderDiff(el, lines, key)
+                return (isShellLang(block.lang) ? null : highlightBlock(el, style, lines, block.lang, key)) ?? lines.map((line, i) => codeLine(el, style, line, block.lang, `${key}.${i}`))
+              })()}
+            </Box>
+            {fold && block.lines.length > FOLD.code.over ? foldButton(el, fold, b, block.lines.length - FOLD.code.keep, 'line', isOpen) : null}
+          </Box>
+        )
+      case 'list':
+        return renderList(el, style, block, columns, key)
+      case 'table':
+        return renderTable(el, style, block, columns, key)
+    }
+  })
+  const copied = rendered.map((element, b) => {
+    const block = blocks[b]
+    const text = block ? copySource(block) : undefined
+    const isPlainCode = block?.kind === 'code' && !drawn.has(b)
+    const art = drawn.get(b)?.art
+    const button = text === undefined || isPlainCode ? null : art === undefined ? copy?.(text, `copy${b}`) : (
+      <el.Box key={`copies${b}`} flexDirection="row" columnGap={1}>
+        {copy?.(text, `copy${b}`, '⧉ source')}
+        {copy?.(art, `art${b}`, '⧉ art')}
+      </el.Box>
+    )
+    if (!button) return element
+    const { Box } = el
+    const rtl = style.reorder && block !== undefined && hasRtl(block.raw)
+    return block?.kind === 'quote' || block?.kind === 'alert' ? (
+      <Box key={`c${b}`} flexDirection="row" columnGap={2} {...(rtl ? { justifyContent: 'flex-end' as const } : {})}>
+        {element}
+        {button}
+      </Box>
+    ) : (
+      <Box key={`c${b}`} flexDirection="column" {...(rtl && (block?.kind === 'list' || (block?.kind === 'table' && isRtlTable(style, block))) ? {} : { alignSelf: 'flex-start' as const })}>
+        <Box justifyContent="flex-end">{button}</Box>
+        {element}
+      </Box>
+    )
+  })
+  const isFigure = (b: number) => blocks[b]?.kind === 'table' || drawn.has(b)
+  const out: RenderElement[] = []
+  for (let b = 0; b < rendered.length; b++) {
+    if (!isFigure(b) || !isFigure(b + 1)) {
+      out.push(copied[b]!)
+      continue
+    }
+    const start = b
+    while (isFigure(b + 1)) b++
+    out.push(
+      <Box key={`row${start}`} flexDirection="row" flexWrap="wrap" columnGap={4} rowGap={1}>
+        {copied.slice(start, b + 1).map((figure, i) => <Box key={`f${start + i}`} flexShrink={0}>{figure}</Box>)}
+      </Box>,
+    )
+  }
+  return out
+}
+
+export type ToolRow = { tool: string; input: unknown; isRunning: boolean; isErrored: boolean; isInterrupted: boolean }
+
+const VERBS: Record<string, string> = {
+  Bash: 'Ran', PowerShell: 'Ran', Read: 'Read', Write: 'Wrote', Edit: 'Edited', MultiEdit: 'Edited', NotebookEdit: 'Edited',
+  Grep: 'Searched', Glob: 'Listed', WebFetch: 'Fetched', WebSearch: 'Searched the web for', Agent: 'Delegated', Task: 'Delegated',
+}
+
+const field = (input: unknown, ...keys: string[]): string | undefined => {
+  if (input === null || typeof input !== 'object') return undefined
+  for (const k of keys) {
+    const v = (input as Record<string, unknown>)[k]
+    if (typeof v === 'string' && v.trim() !== '') return v
+  }
+  return undefined
+}
+
+export const renderToolRow = (el: ElementTable, style: Style, row: ToolRow): RenderElement => {
+  const { Box, Text } = el
+  const t = style.theme
+  const isShell = row.tool === 'Bash' || row.tool === 'PowerShell'
+  const verb = VERBS[row.tool] ?? row.tool.replace(/^mcp__([^_]+)__/, '$1 ')
+  const target = isShell
+    ? field(row.input, 'command')?.split('\n')[0]
+    : field(row.input, 'file_path', 'notebook_path', 'path', 'pattern', 'url', 'query', 'description')
+  const dot = row.isErrored ? t.codeFlag : row.isInterrupted ? t.codeComment : row.isRunning ? t.accent : t.number
+  const isPath = target !== undefined && /^(~|\.{0,2}\/|[A-Za-z]:\\)/.test(target)
+
+  return (
+    <Box flexDirection="row">
+      <Box width={2} flexShrink={0}>
+        <Text color={dot}>{row.isRunning ? '◌' : '●'}</Text>
+      </Box>
+      <Text wrap="truncate-end">
+        <Text bold>{verb}</Text>
+        {target === undefined ? null : <Text> </Text>}
+        {target === undefined ? null : isShell ? codeLine(el, style, target, 'bash', 'cmd') : <Text color={isPath ? t.path : t.inlineCode}>{target}</Text>}
+        {row.isInterrupted ? <Text dimColor> interrupted</Text> : row.isErrored ? <Text color={t.codeFlag}> failed</Text> : null}
+      </Text>
+    </Box>
+  )
+}
+
+const OUTPUT_LINES = 120
+
+const lines = (value: unknown): string[] => (typeof value === 'string' && value !== '' ? value.replace(/\n$/, '').split('\n') : [])
+
+export const renderExpandedShell = (el: ElementTable, style: Style, row: ToolRow & { output?: unknown }): RenderElement => {
+  const { Box, Text } = el
+  const t = style.theme
+  const command = (field(row.input, 'command') ?? '').split('\n')
+  const out = row.output !== null && typeof row.output === 'object' ? (row.output as Record<string, unknown>) : {}
+  const stdout = lines(out.stdout)
+  const stderr = lines(out.stderr)
+  const shown = [...stdout.map(text => ({ text, color: undefined as string | undefined })), ...stderr.map(text => ({ text, color: t.codeFlag as string | undefined }))]
+  const visible = shown.slice(0, OUTPUT_LINES)
+  const dot = row.isErrored ? t.codeFlag : row.isInterrupted ? t.codeComment : row.isRunning ? t.accent : t.number
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row">
+        <Box width={2} flexShrink={0}>
+          <Text color={dot}>{row.isRunning ? '◌' : '●'}</Text>
+        </Box>
+        <Box flexDirection="column">
+          {command.map((line, i) => (
+            <Text key={`c${i}`}>
+              {i === 0 ? <Text bold>{`${row.tool}(`}</Text> : null}
+              {codeLine(el, style, line, 'bash', `cmd${i}`)}
+              {i === command.length - 1 ? <Text bold>)</Text> : null}
+            </Text>
+          ))}
+        </Box>
+      </Box>
+      {row.isRunning ? null : (
+        <Box paddingLeft={2}>
+          <Box flexDirection="column" alignSelf="flex-start" borderStyle="round" borderColor={t.codeComment} paddingX={1}>
+            {visible.length === 0 ? <Text dimColor>(No output)</Text> : visible.map((l, i) => <Text key={`o${i}`} color={l.color}>{l.text === '' ? ' ' : l.text}</Text>)}
+            {shown.length > visible.length ? <Text dimColor>{`\u2026 +${shown.length - visible.length} lines`}</Text> : null}
+          </Box>
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+const GROUPS: [RegExp, string, string][] = [
+  [/^(Bash|PowerShell)$/, 'ran', 'command'],
+  [/^Read$/, 'read', 'file'],
+  [/^(Write|Edit|MultiEdit|NotebookEdit)$/, 'edited', 'file'],
+  [/^(Grep|Glob)$/, 'searched', 'pattern'],
+  [/^(WebFetch|WebSearch)$/, 'fetched', 'page'],
+  [/^(Agent|Task)$/, 'delegated', 'task'],
+]
+
+export const groupSummary = (calls: readonly { tool: string }[]): string => {
+  const counts = new Map<string, number>()
+  for (const call of calls) {
+    const [, verb, noun] = GROUPS.find(([re]) => re.test(call.tool)) ?? [, 'used', call.tool.replace(/^mcp__([^_]+)__/, '$1 ')]
+    const label = `${verb} ${noun}`
+    counts.set(label, (counts.get(label) ?? 0) + 1)
+  }
+  const parts = [...counts].map(([label, n]) => {
+    const [verb, ...noun] = label.split(' ')
+    const name = noun.join(' ')
+    return `${verb} ${n} ${n === 1 ? name : name.endsWith('h') ? `${name}es` : `${name}s`}`
+  })
+  const text = parts.join(', ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+export const renderToolGroup = (el: ElementTable, style: Style, calls: readonly ToolRow[], isActive: boolean): RenderElement => {
+  const { Box, Text } = el
+  const t = style.theme
+  const failed = calls.filter(c => c.isErrored).length
+  const running = isActive && calls.some(c => c.isRunning)
+  const dot = failed ? t.codeFlag : running ? t.accent : t.number
+  const last = calls[calls.length - 1]
+  const lastTarget = last ? field(last.input, 'command', 'file_path', 'notebook_path', 'path', 'pattern', 'url', 'query', 'description')?.split('\n')[0] : undefined
+  return (
+    <Box flexDirection="row">
+      <Box width={2} flexShrink={0}>
+        <Text color={dot}>{running ? '◌' : '●'}</Text>
+      </Box>
+      <Text wrap="truncate-end">
+        <Text bold>{groupSummary(calls)}</Text>
+        {failed ? <Text color={t.codeFlag}>{` · ${failed} failed`}</Text> : null}
+        {lastTarget ? <Text dimColor>{` · last: ${lastTarget}`}</Text> : null}
+      </Text>
+    </Box>
+  )
+}
+
+export const formatDuration = (ms: number): string => {
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${Math.max(s, 0)}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+}
+
+export const renderTurnDuration = ({ Text }: ElementTable, style: Style, word: string, durationMs: number): RenderElement => (
+  <Text color={style.theme.codeComment}>
+    {`✻ ${word} for `}
+    <Text color={style.theme.number}>{formatDuration(durationMs)}</Text>
+  </Text>
+)
