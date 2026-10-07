@@ -568,16 +568,63 @@ const field = (input: unknown, ...keys: string[]): string | undefined => {
   return undefined
 }
 
-export const renderToolRow = (el: ElementTable, style: Style, row: ToolRow): RenderElement => {
+// One line, cut to fit: the desktop wraps rather than truncates, so the cut is ours.
+export const fit = (text: string, max: number): string => {
+  const one = text.replace(/\s+/g, ' ').trim()
+  return one.length <= max ? one : one.slice(0, Math.max(1, max - 1)).trimEnd() + '…'
+}
+
+// A shell command as a few words: each step's main program (git, npm and the like with their subcommand),
+// pipes and the plumbing (cd, echo, for loops, assignments) left out, joined with · ("git status · wc · sort").
+// The full command stays in the expanded row (ctrl+o).
+const PLUMBING = new Set(['cd', 'echo', 'printf', 'for', 'do', 'done', 'then', 'fi', 'else', 'elif', 'esac', 'while', 'if', 'export', 'set', 'true', 'false', 'sleep', 'local', 'read', '{', '}', '(', ')'])
+const WITH_SUB = new Set(['git', 'npm', 'pnpm', 'yarn', 'bun', 'npx', 'claude', 'gh', 'docker', 'kubectl', 'cargo', 'go', 'brew', 'uv', 'pip', 'eas', 'expo', 'magnum', 'xcrun', 'swift'])
+export const shortCommand = (command: string): string => {
+  const out: string[] = []
+  for (const step of command.split(/\n|;|&&|\|\|/)) {
+    // a pipeline is its first program: git status | grep | wc reads as git status
+    const w = (step.split(/(?<!\|)\|(?!\|)/)[0] ?? '').trim().replace(/^([A-Za-z_][A-Za-z0-9_]*=("[^"]*"|'[^']*'|\S*)\s*)+/, '').split(/\s+/).filter(Boolean)
+    const prog = (w[0] ?? '').replace(/^[(!]+/, '').split('/').pop() ?? ''
+    if (!prog || PLUMBING.has(prog) || /^[-$"'>&<]/.test(prog)) continue
+    let label = prog
+    if (WITH_SUB.has(prog)) {
+      // the subcommand comes after options and their values (git -C dir push → git push)
+      for (let i = 1; i < w.length; i++) {
+        const x = w[i]!
+        if (x.startsWith('-')) { if (/^-[A-Za-z]$/.test(x)) i++; continue }
+        if (/^[a-z][\w:-]*$/.test(x)) label = `${prog} ${x}`
+        break
+      }
+    }
+    if (!out.includes(label)) out.push(label)
+  }
+  return out.length > 4 ? `${out.slice(0, 4).join(' · ')} · …` : out.join(' · ')
+}
+
+// What a tool call is about, in a few words: a shell's own description first, else its command shortened.
+export const callTarget = (tool: string, input: unknown): { main?: string; aside?: string } => {
+  if (tool === 'Bash' || tool === 'PowerShell') {
+    const cmd = field(input, 'command') ?? ''
+    const desc = field(input, 'description')
+    const short = shortCommand(cmd)
+    return desc ? { main: desc, aside: short ? `$ ${short}` : undefined } : { main: short ? `$ ${short}` : undefined }
+  }
+  return { main: field(input, 'file_path', 'notebook_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt')?.split('\n')[0] }
+}
+
+export const renderToolRow = (el: ElementTable, style: Style, row: ToolRow, columns = 100): RenderElement => {
   const { Box, Text } = el
   const t = style.theme
   const isShell = row.tool === 'Bash' || row.tool === 'PowerShell'
   const verb = VERBS[row.tool] ?? row.tool.replace(/^mcp__([^_]+)__/, '$1 ')
-  const target = isShell
-    ? field(row.input, 'command')?.split('\n')[0]
-    : field(row.input, 'file_path', 'notebook_path', 'path', 'pattern', 'url', 'query', 'description')
+  const { main, aside } = callTarget(row.tool, row.input)
   const dot = row.isErrored ? t.codeFlag : row.isInterrupted ? t.codeComment : row.isRunning ? t.accent : t.number
-  const isPath = target !== undefined && /^(~|\.{0,2}\/|[A-Za-z]:\\)/.test(target)
+  const isPath = main !== undefined && /^(~|\.{0,2}\/|[A-Za-z]:\\)/.test(main)
+  const tail = row.isInterrupted ? ' interrupted' : row.isErrored ? ' failed' : ''
+  // the room after the dot, the verb and the tail: the main text first, the aside gets what is left
+  const room = Math.max(12, columns - 4 - verb.length - tail.length)
+  const mainText = main ? fit(isPath ? shortPath(main) : main, Math.min(room, 90)) : undefined
+  const asideText = aside && mainText && room - mainText.length > 12 ? fit(aside, room - mainText.length - 3) : undefined
 
   return (
     <Box flexDirection="row">
@@ -586,12 +633,18 @@ export const renderToolRow = (el: ElementTable, style: Style, row: ToolRow): Ren
       </Box>
       <Text wrap="truncate-end">
         <Text bold>{verb}</Text>
-        {target === undefined ? null : <Text> </Text>}
-        {target === undefined ? null : isShell ? codeLine(el, style, target, 'bash', 'cmd') : <Text color={isPath ? t.path : t.inlineCode}>{target}</Text>}
-        {row.isInterrupted ? <Text dimColor> interrupted</Text> : row.isErrored ? <Text color={t.codeFlag}> failed</Text> : null}
+        {mainText ? <Text color={isShell && !aside ? t.inlineCode : isPath ? t.path : undefined}>{` ${mainText}`}</Text> : null}
+        {asideText ? <Text dimColor>{`   ${asideText}`}</Text> : null}
+        {row.isInterrupted ? <Text dimColor>{tail}</Text> : row.isErrored ? <Text color={t.codeFlag}>{tail}</Text> : null}
       </Text>
     </Box>
   )
+}
+
+// ~/…/two/last.ts: long absolute paths keep their head and their last two parts.
+const shortPath = (p: string): string => {
+  const parts = p.split('/')
+  return parts.length > 5 ? [parts[0] || '', '…', ...parts.slice(-2)].join('/').replace(/^\/…/, '…') : p
 }
 
 const OUTPUT_LINES = 120
@@ -661,23 +714,26 @@ export const groupSummary = (calls: readonly { tool: string }[]): string => {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
-export const renderToolGroup = (el: ElementTable, style: Style, calls: readonly ToolRow[], isActive: boolean): RenderElement => {
+export const renderToolGroup = (el: ElementTable, style: Style, calls: readonly ToolRow[], isActive: boolean, columns = 100): RenderElement => {
   const { Box, Text } = el
   const t = style.theme
   const failed = calls.filter(c => c.isErrored).length
   const running = isActive && calls.some(c => c.isRunning)
   const dot = failed ? t.codeFlag : running ? t.accent : t.number
   const last = calls[calls.length - 1]
-  const lastTarget = last ? field(last.input, 'command', 'file_path', 'notebook_path', 'path', 'pattern', 'url', 'query', 'description')?.split('\n')[0] : undefined
+  const summary = groupSummary(calls)
+  const lastMain = last ? callTarget(last.tool, last.input).main : undefined
+  const room = columns - 4 - summary.length - (failed ? 12 : 0) - 9
+  const lastTarget = lastMain && room > 12 ? fit(lastMain, Math.min(room, 70)) : undefined
   return (
     <Box flexDirection="row">
       <Box width={2} flexShrink={0}>
         <Text color={dot}>{running ? '◌' : '●'}</Text>
       </Box>
       <Text wrap="truncate-end">
-        <Text bold>{groupSummary(calls)}</Text>
+        <Text bold>{summary}</Text>
         {failed ? <Text color={t.codeFlag}>{` · ${failed} failed`}</Text> : null}
-        {lastTarget ? <Text dimColor>{` · last: ${lastTarget}`}</Text> : null}
+        {lastTarget ? <Text dimColor>{` · ${lastTarget}`}</Text> : null}
       </Text>
     </Box>
   )

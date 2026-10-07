@@ -123,10 +123,10 @@ export const register: Register = (on, options) => {
         for (const call of e.props.calls) if (call.tool_use_id) expandedCalls.add(call.tool_use_id)
         return next(e)
       }
-      return renderToolGroup($.ui.resolve(e), style, e.props.calls, e.props.isActive)
+      return renderToolGroup($.ui.resolve(e), style, e.props.calls, e.props.isActive, Math.max(40, (e.viewport?.columns ?? 100) - 4))
     })
     on('ui.render', { component: 'ToolUse' }, ($, e, next) => {
-      if (!expandedCalls.has(e.props.tool_use_id)) return renderToolRow($.ui.resolve(e), style, e.props)
+      if (!expandedCalls.has(e.props.tool_use_id)) return renderToolRow($.ui.resolve(e), style, e.props, Math.max(40, (e.viewport?.columns ?? 100) - 4))
       return e.props.tool === 'Bash' || e.props.tool === 'PowerShell' ? renderExpandedShell($.ui.resolve(e), style, e.props) : next(e)
     })
   }

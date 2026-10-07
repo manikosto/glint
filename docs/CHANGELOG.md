@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-10-07
+
+### Changed
+
+- Tool rows read in one line on every surface: a shell call shows Claude's own description of it (`Ran Compare both design pages`) with the command shortened beside it in dim (`$ git status · wc · sort`), never the whole command. Long paths keep their head and last two parts. The cut is glint's own, so the desktop, which wraps instead of truncating, gets one line too.
+- A tool group's summary ends with the last call's short description instead of its full command.
+
 ## [0.4.2] - 2026-10-07
 
 ### Changed
