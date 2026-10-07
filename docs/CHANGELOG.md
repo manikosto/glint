@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-10-07
+
+### Changed
+
+- A clicked link opens in the browser and a clicked file is revealed in Finder directly (the preview mod is gone).
+
+## [0.4.0] - 2026-10-07
+
+### Changed
+
+- Code blocks are cards as wide as the reply: the language at the top left (`❯ bash` for shells), copy always at the top right, the code inside a rounded border.
+- Copy is quiet: plain dim text that brightens on hover, not a bright chip.
+- No copy on lists, quotes, alerts and paragraphs: it broke the flow of the text. Code, tables and diagrams keep it.
+
 ## [0.3.1] - 2026-10-05
 
 ### Fixed

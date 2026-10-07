@@ -14,9 +14,8 @@ glint is a fork of [prismantis](https://github.com/NahumLitvin/prismantis) 0.6.0
 
 ## What glint adds
 
-- `$.command.run` of `/preview` when a link or file in a reply is clicked.
 - `$.process.run(['open', url])` for an `http(s)` URL, and `open -R` (reveal in Finder, never launch) for a
-  file, when the preview mod is not installed. Any other scheme is refused: the target comes from a reply.
+  file, when a link is clicked. Any other scheme is refused: the target comes from a reply.
 - A note added to each prompt you type (≈170 tokens) saying how replies render. Turn it off with the
   `diagramHints` setting.
 

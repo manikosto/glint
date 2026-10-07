@@ -28,14 +28,9 @@ async function foldFor($: EngineInterface, e: { requestId: string }): Promise<Fo
   }
 }
 
-// A file or URL from the band opens in the preview pane when the preview mod is installed. Without it, a web
-// URL opens in the browser and a file is only revealed in Finder: the target comes from a reply's text, so it
-// is never launched (a .command or .app would run) and no other URL scheme is handed to the system.
+// A file or URL from a reply: a web URL opens in the browser and a file is only revealed in Finder: the
+// target comes from a reply's text, so it is never launched (a .command or .app would run) and no other URL scheme is handed to the system.
 async function openTarget($: EngineInterface, t: GlintTarget) {
-  try {
-    const r = await $.command.run({ command: 'preview', args: t.target })
-    if (r && 'text' in r && r.text) return
-  } catch {}
   if (t.kind === 'url' && /^https?:\/\/[^\s]+$/i.test(t.target)) {
     await $.process.run(['open', t.target]).catch(() => undefined)
   } else if (t.kind === 'file' && t.target.startsWith('/')) {
@@ -93,7 +88,9 @@ const drawMarkdown = ($: EngineInterface, el: ReturnType<EngineInterface['ui']['
     style.copyButtons ? (
       <Button
         key={key}
-        variant="primary"
+        plain
+        dimColor
+        hover={{ dimColor: false, bold: true }}
         label={label}
         onPress={press => {
           $.ui.copy({ text, surface: press.surface })

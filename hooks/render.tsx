@@ -484,15 +484,16 @@ export const renderBlocks = (el: ElementTable, style: Style, blocks: Block[], co
         return <Text key={key} color={t.rule} dimColor={!t.rule}>{'─'.repeat(Math.max(8, Math.min(columns, 80)))}</Text>
       case 'code':
         return drawn.get(b)?.element ?? (
-          <Box key={key} flexDirection="column" alignSelf="flex-start">
-            <Box flexDirection="row" justifyContent="space-between" columnGap={4}>
-              <Text color={t.codeComment}>{`── ${block.lang || 'code'}${block.lines.length > FOLD.code.over ? ` · ${block.lines.length} lines` : ''}`}</Text>
-              <Box flexDirection="row" columnGap={1}>
+          // a card as wide as the reply: the language at the top left, copy always at the top right
+          <Box key={key} flexDirection="column" borderStyle="round" borderColor={t.rule ?? t.codeComment} paddingX={1} width={Math.max(20, Math.min(columns, 120))}>
+            <Box flexDirection="row" justifyContent="space-between" columnGap={2}>
+              <Text color={t.codeComment}>{`${isShellLang(block.lang) ? '❯ ' : ''}${block.lang || 'code'}${block.lines.length > FOLD.code.over ? ` · ${block.lines.length} lines` : ''}`}</Text>
+              <Box flexDirection="row" columnGap={2}>
                 {isDiffLang(block.lang) ? copy?.(diffNewText(block.lines), `copynew${b}`, '⧉ new only') ?? null : null}
                 {copy?.(block.lines.join('\n'), `copy${b}`) ?? null}
               </Box>
             </Box>
-            <Box flexDirection="column" paddingLeft={isDiffLang(block.lang) ? 0 : 2}>
+            <Box flexDirection="column">
               {(() => {
                 const folded = fold !== undefined && !isOpen && block.lines.length > FOLD.code.over
                 const lines = folded ? block.lines.slice(0, FOLD.code.keep) : block.lines
@@ -513,6 +514,8 @@ export const renderBlocks = (el: ElementTable, style: Style, blocks: Block[], co
     const block = blocks[b]
     const text = block ? copySource(block) : undefined
     const isPlainCode = block?.kind === 'code' && !drawn.has(b)
+    // copy belongs to things people paste (code, tables, diagrams): on prose blocks it only breaks the flow
+    if (block && (block.kind === 'list' || block.kind === 'quote' || block.kind === 'alert' || block.kind === 'paragraph' || block.kind === 'heading')) return element
     const art = drawn.get(b)?.art
     const button = text === undefined || isPlainCode ? null : art === undefined ? copy?.(text, `copy${b}`) : (
       <el.Box key={`copies${b}`} flexDirection="row" columnGap={1}>
@@ -523,13 +526,9 @@ export const renderBlocks = (el: ElementTable, style: Style, blocks: Block[], co
     if (!button) return element
     const { Box } = el
     const rtl = style.reorder && block !== undefined && hasRtl(block.raw)
-    return block?.kind === 'quote' || block?.kind === 'alert' ? (
-      <Box key={`c${b}`} flexDirection="row" columnGap={2} {...(rtl ? { justifyContent: 'flex-end' as const } : {})}>
-        {element}
-        {button}
-      </Box>
-    ) : (
-      <Box key={`c${b}`} flexDirection="column" {...(rtl && (block?.kind === 'list' || (block?.kind === 'table' && isRtlTable(style, block))) ? {} : { alignSelf: 'flex-start' as const })}>
+    // tables and diagrams: a quiet copy at the top right, the figure under it
+    return (
+      <Box key={`c${b}`} flexDirection="column" {...(rtl && block?.kind === 'table' && isRtlTable(style, block) ? {} : { alignSelf: 'flex-start' as const })}>
         <Box justifyContent="flex-end">{button}</Box>
         {element}
       </Box>

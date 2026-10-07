@@ -11,7 +11,7 @@ A fork of [prismantis](https://github.com/NahumLitvin/prismantis) by Nahum Litvi
 - **Markdown, in color**: headings, tables, nested lists, quotes, GitHub alerts, highlighted code in 20+ languages, numbers and paths.
 - **Mermaid** flowcharts, sequence diagrams and `xychart-beta` bar and line charts as terminal box art.
 - **Copy buttons** on code blocks, tables, diagrams, lists and quotes.
-- **Clickable links and files**: a URL or a file path in a reply opens in the [preview](https://github.com/manikosto/preview) pane on a click (fullscreen mode), or in the browser / Finder without it. Files Claude created this session are green, edited ones yellow.
+- **Clickable links and files**: a URL or a file path in a reply opens on a click (fullscreen mode): a URL in the browser, a file revealed in Finder. Files Claude created this session are green, edited ones yellow.
 - **A link band** above the prompt with every link and file the last reply named, one key or click each.
 - **Folding blocks**: code over 24 lines, lists and tables over 14 rows show their start and a `▾ N more` button.
 - **Review-style diffs**: ```` ```diff ```` blocks get old and new line numbers, green and red lines, and a `⧉ new only` copy button that takes the code as it is after the change.
