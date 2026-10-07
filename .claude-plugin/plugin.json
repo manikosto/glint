@@ -1,6 +1,6 @@
 {
   "name": "glint",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Colorful replies (forked from prismantis, MIT) with clickable links and file paths, files Claude changed highlighted, and a band of the last reply's links that open in the preview pane.",
   "author": {
     "name": "manikosto (fork of prismantis by Nahum Litvin)"
@@ -61,7 +61,7 @@
       "type": "string",
       "title": "Table style",
       "description": "rules: a rule under the header and between rows. grid: heavier header rule, wider gaps. minimal: header rule only.",
-      "default": "rules",
+      "default": "minimal",
       "options": [
         "rules",
         "grid",

@@ -224,7 +224,8 @@ export const register: Register = (on, options) => {
     const el = $.ui.resolve(e)
     const { Box } = el
     const columns = Math.max(20, (e.viewport?.columns ?? 100) - 4)
-    return <Box flexDirection="column" rowGap={1} {...(style.reorder && hasRtl(e.props.text) ? { width: '100%' } : {})}>{drawMarkdown($, el, style, blocks, columns, await foldFor($, e))}</Box>
+    LINKS.surface = e.surface
+    return <Box flexDirection="column" {...(style.reorder && hasRtl(e.props.text) ? { width: '100%' } : {})}>{drawMarkdown($, el, style, blocks, columns, await foldFor($, e))}</Box>
   })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
@@ -233,12 +234,13 @@ export const register: Register = (on, options) => {
     const el = $.ui.resolve(e)
     const { Box, Text } = el
     const columns = Math.max(20, (e.viewport?.columns ?? 100) - 4)
+    LINKS.surface = e.surface
     return (
       <Box flexDirection="row">
         <Box width={2} flexShrink={0}>
           <Text color={style.theme.accent}>{e.props.isFirstOfReply ? '⏺' : ' '}</Text>
         </Box>
-        <Box flexDirection="column" rowGap={1} flexGrow={1}>
+        <Box flexDirection="column" flexGrow={1}>
           {drawMarkdown($, el, style, blocks, columns, await foldFor($, e))}
         </Box>
       </Box>

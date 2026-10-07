@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-10-07
+
+A review of every element, for replies that read as one typeset page.
+
+### Changed
+
+- Air between blocks follows the source: a blank line there is one row, none hugs (a list under its lead-in sentence). A heading takes a second row above it.
+- List glyphs sit at the top of a wrapped item, never in its middle; numbered markers line up (` 9.` / `10.`); deeper levels use `◦` and `▪`.
+- Dates and times highlight whole (`2026-10-07`, `14:30`), and numbers keep their unit (`3.2k`, `1.5MB`, `10x`).
+- Inline code has a subtle background from the theme (`codeBg`), so it reads as code on the desktop too.
+- Columns of numbers in a table are right-aligned; the default table style is `minimal` (one rule under the header).
+- A one-line shell command is one row: `❯ npm test` with copy on the right.
+- Alerts carry a glyph (`ℹ ✦ ❗ ⚠ ✗`) and semantic colors that are the same under every theme.
+- On the desktop a URL is a real link; file paths are colored, bold with `+` / `✎` when Claude created or edited them this session.
+- MCP tool rows read as `Gmail · search threads` instead of the wire name.
+
 ## [0.5.0] - 2026-10-07
 
 ### Changed

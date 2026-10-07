@@ -12,7 +12,7 @@ export const FILES = {
 }
 
 // Set by the render hook for the drawing in progress: what a click on a link in a reply does.
-export const LINKS: { press?: (href: string) => void } = {}
+export const LINKS: { press?: (href: string) => void; surface?: string } = {}
 
 const EXT = 'tsx?|jsx?|mjs|cjs|mts|cts|json|jsonc|md|mdx|html?|css|scss|less|svg|png|jpe?g|gif|webp|pdf|py|swift|kt|kts|java|go|rs|rb|php|c|cc|cpp|h|hpp|m|mm|ya?ml|toml|ini|env|sh|zsh|bash|txt|log|lock|plist|xml|sql|gradle|graphql|gql|vue|svelte|astro|csv|xcconfig|entitlements|pbxproj'
 

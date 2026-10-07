@@ -6,7 +6,7 @@ import { TERMINALS } from './rtl'
 
 export const TOKENS = [
   'accent', 'heading', 'strong', 'emphasis', 'inlineCode', 'codeText', 'codeCommand', 'codeFlag', 'codeString', 'codeComment',
-  'link', 'path', 'number', 'quote', 'rule', 'tableHeader', 'tableRule', 'bullet', 'diagram', 'diagramText',
+  'link', 'path', 'number', 'quote', 'rule', 'tableHeader', 'tableRule', 'bullet', 'diagram', 'diagramText', 'codeBg',
 ] as const
 
 export type Theme = Partial<Record<(typeof TOKENS)[number], string>>
@@ -44,7 +44,7 @@ export const resolveStyle = (options: PluginOptions): Style => {
   return {
     theme: { ...base, ...fromFields },
     headingStyle: pick(options.headingStyle, ['bold', 'underline', 'uppercase', 'banner'] as const, 'banner'),
-    tableStyle: pick(options.tableStyle, ['rules', 'grid', 'minimal'] as const, 'rules'),
+    tableStyle: pick(options.tableStyle, ['rules', 'grid', 'minimal'] as const, 'minimal'),
     highlightNumbers: options.highlightNumbers !== false,
     highlightPaths: options.highlightPaths !== false,
     mermaid: options.mermaid !== false,

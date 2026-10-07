@@ -22,16 +22,23 @@ const flowOf = (style: Style, nodes: Inline[], columns: number) => (style.reorde
 const NEW_FILE = '#a6e3a1'
 const EDITED_FILE = '#f9e2af'
 
+// A file path: the path color, or the status color (new, edited this session) in bold. No underline: a
+// click reaches the plugin only through the Markdown element, which the terminal gets for such lines.
 const fileLink = (el: ElementTable, style: Style, text: string, key: string, asCode: boolean): RenderElement => {
   const { Text } = el
   const state = stateOf(text)
   const color = state === 'new' ? NEW_FILE : state === 'edit' ? EDITED_FILE : asCode ? style.theme.inlineCode : style.theme.path
-  return <Text key={key} color={color} bold={state !== undefined} underline>{text}</Text>
+  const mark = state === 'new' ? '+' : state === 'edit' ? '✎' : ''
+  return <Text key={key} color={color} bold={state !== undefined} backgroundColor={asCode ? style.theme.codeBg : undefined}>{mark ? `${mark} ${text}` : text}</Text>
 }
 
-const urlLink = (el: ElementTable, style: Style, text: string, _href: string, key: string): RenderElement => {
+// A URL: an anchor on the desktop (the Link element), colored text elsewhere (the terminal gets a
+// Markdown element for the whole line instead, where a click reaches the plugin).
+const urlLink = (el: ElementTable, style: Style, text: string, href: string, key: string): RenderElement => {
   const { Text } = el
-  return <Text key={key} color={style.theme.link} underline>{text}</Text>
+  const Link = (el as { Link?: ElementConstructor<{ href: string }> }).Link
+  const body = <Text color={style.theme.link} underline>{text}</Text>
+  return LINKS.surface === 'desktop' && Link ? <Text key={key}><Link href={href}>{body}</Link></Text> : <Text key={key}>{body}</Text>
 }
 
 const isLinky = (nodes: Inline[]): boolean =>
@@ -69,7 +76,8 @@ const inlineLine = (el: ElementTable, style: Style, nodes: Inline[], key: string
   const { Text } = el
   const Markdown = (el as { Markdown?: ElementConstructor<MarkdownProps> }).Markdown
   const press = LINKS.press
-  if (Markdown && press && isLinky(nodes)) {
+  // the desktop draws URLs as anchors itself; the terminal needs the engine's Markdown element for a click
+  if (Markdown && press && LINKS.surface !== 'desktop' && isLinky(nodes)) {
     return <Markdown key={key} text={toMarkdown(nodes, style.highlightPaths)} onLinkPress={link => press(link.href)} />
   }
   return <Text key={key} {...props}>{renderInline(el, style, nodes, key)}</Text>
@@ -90,12 +98,12 @@ const renderInline = (el: ElementTable, style: Style, nodes: Inline[], keyBase: 
       case 'strike':
         return <Text key={key} strikethrough dimColor>{renderInline(el, style, n.children, key)}</Text>
       case 'code':
-        return style.highlightPaths && isPathLike(n.text) ? fileLink(el, style, n.text, key, true) : <Text key={key} color={t.inlineCode}>{n.text}</Text>
+        return style.highlightPaths && isPathLike(n.text) ? fileLink(el, style, n.text, key, true) : <Text key={key} color={t.inlineCode} backgroundColor={t.codeBg}>{n.text}</Text>
       case 'link':
         if (!/^(https?|file|mailto):/.test(n.href) && isPathLike(n.href)) return fileLink(el, style, n.text, key, false)
         return n.text === n.href
           ? urlLink(el, style, n.href, n.href, key)
-          : <Text key={key}>{urlLink(el, style, n.text, n.href, key + 'l')}<Text dimColor> ({n.href.replace(/^https?:\/\//, '')})</Text></Text>
+          : urlLink(el, style, n.text, n.href, key)
       case 'number':
         return <Text key={key} color={t.number}>{n.text}</Text>
       case 'path':
@@ -240,9 +248,12 @@ const renderTable = (el: ElementTable, style: Style, block: Extract<Block, { kin
   const widths = columnWidths(natural, columns, gap)
   const order = natural.map((_, c) => c)
   if (rtl) order.reverse()
+  // a column of numbers reads right-aligned unless the author aligned it
+  const NUMERIC = /^[-+]?[\d.,]+\s*(%|ms|s|m|h|d|k|K|M|GB|MB|KB|x)?$|^[-–—]$/
+  const numeric = natural.map((_, c) => block.rows.length > 0 && block.rows.every(r => { const txt = displayText(r[c] ?? []).trim(); return txt === '' || NUMERIC.test(txt) }))
   const ruleChar = style.tableStyle === 'grid' ? '━' : '─'
   const justify = (c: number) =>
-    block.align[c] === 'right' ? 'flex-end' : block.align[c] === 'center' ? 'center' : 'flex-start'
+    block.align[c] === 'right' ? 'flex-end' : block.align[c] === 'center' ? 'center' : numeric[c] ? 'flex-end' : 'flex-start'
 
   const rule = (k: string, heavy: boolean) => (
     <Box key={k} flexDirection="row" columnGap={gap}>
@@ -307,7 +318,9 @@ const drawHeading = (el: ElementTable, style: Style, block: Extract<Block, { kin
   }
 }
 
-const ALERT_COLOR = { note: 'blue', tip: 'green', important: 'magenta', warning: 'yellow', caution: 'red' } as const
+// Alert colors are semantic, the same under every theme; each level carries a glyph so it reads in mono too.
+const ALERT_COLOR = { note: '#89b4fa', tip: '#a6e3a1', important: '#cba6f7', warning: '#f9e2af', caution: '#f38ba8' } as const
+const ALERT_GLYPH = { note: 'ℹ', tip: '✦', important: '❗', warning: '⚠', caution: '✗' } as const
 
 const renderParagraph = (el: ElementTable, style: Style, block: Extract<Block, { kind: 'paragraph' }>, columns: number, key: string) => {
   const { Box, Text } = el
@@ -329,9 +342,9 @@ const renderQuote = (el: ElementTable, style: Style, block: Extract<Block, { kin
     )
   }
   return (
-    <Box key={key} flexDirection="row">
-      <Text color={t.accent}>│ </Text>
-      {inlineLine(el, style, rtl ? rtl.lines[0]! : block.inline, key, { italic: true, color: t.quote })}
+    <Box key={key} flexDirection="row" alignItems="flex-start">
+      <Box flexShrink={0}><Text color={t.accent}>│ </Text></Box>
+      <Box flexGrow={1} flexShrink={1}>{inlineLine(el, style, rtl ? rtl.lines[0]! : block.inline, key, { italic: true, color: t.quote })}</Box>
     </Box>
   )
 }
@@ -339,7 +352,7 @@ const renderQuote = (el: ElementTable, style: Style, block: Extract<Block, { kin
 const renderAlert = (el: ElementTable, style: Style, block: Extract<Block, { kind: 'alert' }>, columns: number, key: string) => {
   const { Box, Text } = el
   const color = ALERT_COLOR[block.level]
-  const title = <Text bold color={color}>{block.level[0]!.toUpperCase() + block.level.slice(1)}</Text>
+  const title = <Text bold color={color}>{`${ALERT_GLYPH[block.level]} ${block.level[0]!.toUpperCase() + block.level.slice(1)}`}</Text>
   const rtl = flowOf(style, block.inline, columns - 4)
   if (rtl?.base === 'R') {
     return (
@@ -358,27 +371,31 @@ const renderAlert = (el: ElementTable, style: Style, block: Extract<Block, { kin
   )
 }
 
+const BULLETS = ['•', '◦', '▪', '‣']
+
 const renderList = (el: ElementTable, style: Style, block: Extract<Block, { kind: 'list' }>, columns: number, key: string) => {
   const { Box, Text } = el
   const t = style.theme
+  // numbered markers right-aligned in a column ( 9. / 10.), so the text starts on one line
+  const markerWidth = Math.max(1, ...block.items.filter(it => /\d/.test(it.marker)).map(it => it.marker.length))
   return (
     <Box key={key} flexDirection="column">
       {block.items.map((item, i) => {
         const k = `${key}.${i}`
-        const glyph = /\d/.test(item.marker) ? item.marker : item.depth ? '◦' : '•'
+        const glyph = /\d/.test(item.marker) ? item.marker.padStart(markerWidth) : BULLETS[Math.min(item.depth, BULLETS.length - 1)]!
         const rtl = flowOf(style, item.inline, columns - item.depth * 2 - 2)
         if (rtl?.base === 'R') {
           return (
-            <Box key={k} flexDirection="row" justifyContent="flex-end" paddingRight={item.depth * 2}>
+            <Box key={k} flexDirection="row" justifyContent="flex-end" alignItems="flex-start" paddingRight={item.depth * 2}>
               <Box flexDirection="column" alignItems="flex-end">{renderFlow(el, style, rtl.lines, k)}</Box>
               <Text color={t.bullet}>{` ${glyph}`}</Text>
             </Box>
           )
         }
         return (
-          <Box key={k} flexDirection="row" paddingLeft={item.depth * 2}>
-            <Text color={t.bullet}>{`${glyph} `}</Text>
-            {inlineLine(el, style, rtl ? rtl.lines[0]! : item.inline, k)}
+          <Box key={k} flexDirection="row" alignItems="flex-start" paddingLeft={item.depth * 2}>
+            <Box flexShrink={0}><Text color={t.bullet}>{`${glyph} `}</Text></Box>
+            <Box flexGrow={1} flexShrink={1}>{inlineLine(el, style, rtl ? rtl.lines[0]! : item.inline, k)}</Box>
           </Box>
         )
       })}
@@ -482,28 +499,44 @@ export const renderBlocks = (el: ElementTable, style: Style, blocks: Block[], co
         return renderAlert(el, style, block, columns, key)
       case 'rule':
         return <Text key={key} color={t.rule} dimColor={!t.rule}>{'─'.repeat(Math.max(8, Math.min(columns, 80)))}</Text>
-      case 'code':
-        return drawn.get(b)?.element ?? (
-          // a card as wide as the reply: the language at the top left, copy always at the top right
-          <Box key={key} flexDirection="column" borderStyle="round" borderColor={t.rule ?? t.codeComment} paddingX={1} width={Math.max(20, Math.min(columns, 120))}>
+      case 'code': {
+        const art = drawn.get(b)?.element
+        if (art) return art
+        const isShell = isShellLang(block.lang)
+        const isDiff = isDiffLang(block.lang)
+        const folded = fold !== undefined && !isOpen && block.lines.length > FOLD.code.over
+        const shown = folded ? block.lines.slice(0, FOLD.code.keep) : block.lines
+        const body = isDiff
+          ? renderDiff(el, shown, key)
+          : (isShell ? null : highlightBlock(el, style, shown, block.lang, key)) ?? shown.map((line, i) => codeLine(el, style, line, block.lang, `${key}.${i}`))
+        const cardWidth = Math.max(20, Math.min(columns, 120))
+        const copyButtons = (
+          <Box flexDirection="row" columnGap={2} flexShrink={0}>
+            {isDiff ? copy?.(diffNewText(block.lines), `copynew${b}`, '⧉ new only') ?? null : null}
+            {copy?.(block.lines.join('\n'), `copy${b}`) ?? null}
+          </Box>
+        )
+        // a one-line shell command: the prompt, the command and copy on one row
+        if (isShell && block.lines.length === 1 && width(block.lines[0] ?? '') < cardWidth - 16) {
+          return (
+            <Box key={key} flexDirection="row" justifyContent="space-between" columnGap={2} borderStyle="round" borderColor={t.rule ?? t.codeComment} paddingX={1} width={cardWidth}>
+              <Text wrap="truncate-end"><Text color={t.codeComment}>{'❯ '}</Text>{body[0]}</Text>
+              {copyButtons}
+            </Box>
+          )
+        }
+        // a card as wide as the reply: the language at the top left, copy always at the top right
+        return (
+          <Box key={key} flexDirection="column" borderStyle="round" borderColor={t.rule ?? t.codeComment} paddingX={1} width={cardWidth}>
             <Box flexDirection="row" justifyContent="space-between" columnGap={2}>
-              <Text color={t.codeComment}>{`${isShellLang(block.lang) ? '❯ ' : ''}${block.lang || 'code'}${block.lines.length > FOLD.code.over ? ` · ${block.lines.length} lines` : ''}`}</Text>
-              <Box flexDirection="row" columnGap={2}>
-                {isDiffLang(block.lang) ? copy?.(diffNewText(block.lines), `copynew${b}`, '⧉ new only') ?? null : null}
-                {copy?.(block.lines.join('\n'), `copy${b}`) ?? null}
-              </Box>
+              <Text color={t.codeComment}>{`${isShell ? '❯ ' : ''}${block.lang || 'code'}${block.lines.length > FOLD.code.over ? ` · ${block.lines.length} lines` : ''}`}</Text>
+              {copyButtons}
             </Box>
-            <Box flexDirection="column">
-              {(() => {
-                const folded = fold !== undefined && !isOpen && block.lines.length > FOLD.code.over
-                const lines = folded ? block.lines.slice(0, FOLD.code.keep) : block.lines
-                if (isDiffLang(block.lang)) return renderDiff(el, lines, key)
-                return (isShellLang(block.lang) ? null : highlightBlock(el, style, lines, block.lang, key)) ?? lines.map((line, i) => codeLine(el, style, line, block.lang, `${key}.${i}`))
-              })()}
-            </Box>
+            <Box flexDirection="column">{body}</Box>
             {fold && block.lines.length > FOLD.code.over ? foldButton(el, fold, b, block.lines.length - FOLD.code.keep, 'line', isOpen) : null}
           </Box>
         )
+      }
       case 'list':
         return renderList(el, style, block, columns, key)
       case 'table':
@@ -534,17 +567,26 @@ export const renderBlocks = (el: ElementTable, style: Style, blocks: Block[], co
       </Box>
     )
   })
+  // Air between blocks follows the source: a blank line there is one row here, none hugs (a list under its
+  // lead-in). A heading opens a section, so it takes a second row above it.
+  const spaced = copied.map((element, b) => {
+    const block = blocks[b]
+    if (b === 0 || !block) return element
+    const gap = block.kind === 'heading' ? (block.level <= 2 ? 2 : 1) : block.gapBefore ? 1 : 0
+    if (!gap) return element
+    return <el.Box key={`s${b}`} flexDirection="column" marginTop={gap}>{element}</el.Box>
+  })
   const isFigure = (b: number) => blocks[b]?.kind === 'table' || drawn.has(b)
   const out: RenderElement[] = []
   for (let b = 0; b < rendered.length; b++) {
     if (!isFigure(b) || !isFigure(b + 1)) {
-      out.push(copied[b]!)
+      out.push(spaced[b]!)
       continue
     }
     const start = b
     while (isFigure(b + 1)) b++
     out.push(
-      <Box key={`row${start}`} flexDirection="row" flexWrap="wrap" columnGap={4} rowGap={1}>
+      <Box key={`row${start}`} flexDirection="row" flexWrap="wrap" columnGap={4} rowGap={1} marginTop={blocks[start]?.gapBefore ? 1 : 0}>
         {copied.slice(start, b + 1).map((figure, i) => <Box key={`f${start + i}`} flexShrink={0}>{figure}</Box>)}
       </Box>,
     )
@@ -616,8 +658,9 @@ export const renderToolRow = (el: ElementTable, style: Style, row: ToolRow, colu
   const { Box, Text } = el
   const t = style.theme
   const isShell = row.tool === 'Bash' || row.tool === 'PowerShell'
-  const verb = VERBS[row.tool] ?? row.tool.replace(/^mcp__([^_]+)__/, '$1 ')
-  const { main, aside } = callTarget(row.tool, row.input)
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(row.tool)
+  const verb = VERBS[row.tool] ?? (mcp ? mcpServer(mcp[1]!) : row.tool)
+  const { main, aside } = mcp ? { main: mcp[2]!.replace(/_/g, ' '), aside: callTarget(row.tool, row.input).main } : callTarget(row.tool, row.input)
   const dot = row.isErrored ? t.codeFlag : row.isInterrupted ? t.codeComment : row.isRunning ? t.accent : t.number
   const isPath = main !== undefined && /^(~|\.{0,2}\/|[A-Za-z]:\\)/.test(main)
   const tail = row.isInterrupted ? ' interrupted' : row.isErrored ? ' failed' : ''
@@ -640,6 +683,9 @@ export const renderToolRow = (el: ElementTable, style: Style, row: ToolRow, colu
     </Box>
   )
 }
+
+// claude_ai_Gmail → Gmail, plugin_design_asana → asana: the server's own name, the hosting prefix dropped.
+const mcpServer = (name: string) => name.replace(/^(claude_ai_|plugin_[a-z0-9]+_)/, '').replace(/_/g, ' ')
 
 // ~/…/two/last.ts: long absolute paths keep their head and their last two parts.
 const shortPath = (p: string): string => {

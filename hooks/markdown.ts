@@ -11,7 +11,9 @@ export type Inline =
   | { kind: 'path'; text: string }
   | { kind: 'dim'; text: string }
 
-export type Block = { raw: string } & (
+// `gapBefore`: a blank line stood before the block in the source, so the author meant air there;
+// a list right under its lead-in sentence has none and hugs it.
+export type Block = { raw: string; gapBefore: boolean } & (
   | { kind: 'heading'; level: number; inline: Inline[] }
   | { kind: 'paragraph'; inline: Inline[] }
   | { kind: 'list'; ordered: boolean; items: { marker: string; depth: number; inline: Inline[] }[] }
@@ -22,7 +24,7 @@ export type Block = { raw: string } & (
   | { kind: 'table'; header: Inline[][]; align: ('left' | 'right' | 'center')[]; rows: Inline[][][] }
 )
 
-type Draft = Block extends infer B ? (B extends unknown ? Omit<B, 'raw'> : never) : never
+type Draft = Block extends infer B ? (B extends unknown ? Omit<B, 'raw' | 'gapBefore'> : never) : never
 
 export type AlertLevel = 'note' | 'tip' | 'important' | 'warning' | 'caution'
 const ALERT = /^\[!(note|tip|important|warning|caution)\]\s*(.*)$/i
@@ -55,7 +57,8 @@ const splitRow = (line: string): string[] => {
 }
 
 const INLINE = /(`+)(?!`)(.+?)(?<!`)\1(?!`)|\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+?)\*\*|__([^_]+?)__|~~([^~]+?)~~|(?<![\w*])\*([^*\s][^*]*?)\*(?!\w)|(?<![\w_])_([^_\s][^_]*?)_(?!\w)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g
-const NUMBER = /(?<![\w.#/-])(v?\d+(?:[.,:]\d+)*(?:%|ms|s|m|h|d|Gi|Mi|GB|MB|KB|x)?)(?![\w/])/g
+// a date or time whole (2026-10-07, 14:30, 2026-10-07T14:30:00Z), else a number with its unit
+const NUMBER = /(?<![\w.#/-])(\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?Z?)?|\d{1,2}:\d{2}(?::\d{2})?|v?\d+(?:[.,:]\d+)*(?:%|ms|s|m|h|d|k|K|M|G|Gi|Mi|GB|MB|KB|B|x)?)(?![\w/-])/g
 const PATH = /(?<![\w/.:])((?:~|\.{1,2})?\/[\w.@+-]+(?:\/[\w.@+-]*)*)/g
 
 const decorate = (text: string, hl: Highlight): Inline[] => {
@@ -113,7 +116,12 @@ export const parse = (source: string, hl: Highlight): Block[] => {
   const lines = source.replace(/\r\n?/g, '\n').split('\n')
   const at = (n: number) => lines[n] ?? ''
   const blocks: Block[] = []
-  const add = (block: Draft, from: number, to: number) => blocks.push({ ...block, raw: lines.slice(from, to).join('\n') } as Block)
+  let prevEnd = 0
+  const add = (block: Draft, from: number, to: number) => {
+    const gapBefore = blocks.length > 0 && lines.slice(prevEnd, from).some(l => l.trim() === '')
+    blocks.push({ ...block, raw: lines.slice(from, to).join('\n'), gapBefore } as Block)
+    prevEnd = to
+  }
   let paraStart = 0
   let para: string[] = []
 
