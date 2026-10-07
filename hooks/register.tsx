@@ -156,15 +156,37 @@ export const register: Register = (on, options) => {
     return ran
   })
 
-  // The band above the prompt lists what the last reply pointed at, each one a button.
-  on('turn.complete', async ($, e, next) => {
-    const r = await next(e)
-    if (e.agentId || e.isAborted) return r
-    const found = gather(e.answer ?? '')
-    await update($, recent, () => found)
-    await update($, isHidden, () => false)
-    return r
-  })
+  // The link band above the prompt (off by default: links and files are clickable in the reply itself).
+  if (options.linkBand === true) {
+    on('turn.complete', async ($, e, next) => {
+      const r = await next(e)
+      if (e.agentId || e.isAborted) return r
+      const found = gather(e.answer ?? '')
+      await update($, recent, () => found)
+      await update($, isHidden, () => false)
+      return r
+    })
+
+    on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+      if (e.props.hasSurvey || e.props.view.agentId || e.props.isWorking) return next(e)
+      const list = await read($, recent)
+      if (!list.length || (await read($, isHidden))) return next(e)
+      const { Box, Text, Button } = $.ui.resolve(e)
+      const cols = e.props.bodyColumns
+      const icon = (t: GlintTarget) => (t.kind === 'url' ? '↗' : t.state === 'new' ? '+' : t.state === 'edit' ? '✎' : '◇')
+      let used = 4
+      const shown = list.filter(t => (used += t.label.length + 7) <= cols)
+      return (
+        <Box flexDirection="row" gap={1} width={cols}>
+          <Text dimColor>⌁</Text>
+          {shown.map((t, i) => (
+            <Button key={`go-${i}`} label={`${icon(t)} ${t.label}`} hotkey={String(i + 1)} plain onPress={() => { void openTarget($, t) }} />
+          ))}
+          <Button key="hide" label="×" plain dimColor onPress={() => { void update($, isHidden, () => true) }} />
+        </Box>
+      )
+    })
+  }
 
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') {
@@ -172,26 +194,6 @@ export const register: Register = (on, options) => {
       await update($, recent, () => [])
     }
     return next(e)
-  })
-
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || e.props.view.agentId || e.props.isWorking) return next(e)
-    const list = await read($, recent)
-    if (!list.length || (await read($, isHidden))) return next(e)
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const cols = e.props.bodyColumns
-    const icon = (t: GlintTarget) => (t.kind === 'url' ? '↗' : t.state === 'new' ? '+' : t.state === 'edit' ? '✎' : '◇')
-    let used = 4
-    const shown = list.filter(t => (used += t.label.length + 7) <= cols)
-    return (
-      <Box flexDirection="row" gap={1} width={cols}>
-        <Text dimColor>⌁</Text>
-        {shown.map((t, i) => (
-          <Button key={`go-${i}`} label={`${icon(t)} ${t.label}`} hotkey={String(i + 1)} plain onPress={() => { void openTarget($, t) }} />
-        ))}
-        <Button key="hide" label="×" plain dimColor onPress={() => { void update($, isHidden, () => true) }} />
-      </Box>
-    )
   })
 
   on('command.run', { command: 'glint' }, async ($, e) => {

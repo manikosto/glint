@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-10-07
+
+### Changed
+
+- The link band above the prompt is off by default (`linkBand` setting): links and files are clickable in the reply itself, and the band picked up words that were not files.
+
 ## [0.4.1] - 2026-10-07
 
 ### Changed
